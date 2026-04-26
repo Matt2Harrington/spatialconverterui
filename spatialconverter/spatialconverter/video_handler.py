@@ -44,7 +44,7 @@ class VideoHandler(FileMixin):
         if self.pipe is None:
             # Main depth estimation model
             self.pipe = pipeline(
-                task="depth-estimation", model="depth-anything/Depth-Anything-V2-small-hf"
+                task="depth-estimation", model="depth-anything/Depth-Anything-V2-Large-hf"
             )
         return self.pipe
 
@@ -116,7 +116,7 @@ class VideoHandler(FileMixin):
 
         # saving the mask
         mask = cv2.cvtColor(new_image, cv2.COLOR_BGR2GRAY)
-        inpainted = cv2.inpaint(org_image, mask, 3, cv2.INPAINT_NS)
+        inpainted = cv2.inpaint(org_image, mask, 7, cv2.INPAINT_TELEA)
         return inpainted
 
     def create_over_under_video_frame(self, frame) -> List[FrameData]:
@@ -149,10 +149,9 @@ class VideoHandler(FileMixin):
 
         # Since we parallelized this, let's re-sort the frames by the index
         sorted_frames = sorted(output, key=lambda x: x.index)
-        clip = ImageSequenceClip([obj.frame for obj in sorted_frames], fps=self.fps)
         video_clip = VideoFileClip(self.filename)
-        audio = video_clip.audio
-        clip = clip.set_audio(audio)
+        clip = ImageSequenceClip([obj.frame for obj in sorted_frames], fps=video_clip.fps)
+        clip = clip.set_audio(video_clip.audio)
         clip.write_videofile(
             self.over_under_video_filename(),
             codec="libx264",

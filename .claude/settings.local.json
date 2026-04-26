@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import PySide6\")",
+      "Bash(python3 -m py_compile /Users/mattharrington/Documents/Projects/vision-utils/spatialconverterui/spatialconverterui/__main__.py /Users/mattharrington/Documents/Projects/vision-utils/spatialconverterui/spatialconverterui/window.py /Users/mattharrington/Documents/Projects/vision-utils/spatialconverterui/spatialconverterui/queue_widget.py /Users/mattharrington/Documents/Projects/vision-utils/spatialconverterui/spatialconverterui/runner.py)",
+      "Bash(poetry --version)"
+    ]
+  }
+}
