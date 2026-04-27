@@ -21,13 +21,21 @@ On failure, it automatically retries up to a configurable number of times.
 on PATH, and git. A Vision-Pro-capable Apple Silicon machine is recommended —
 the depth-estimation model is heavy.
 
+### Prerequisites (skip what you already have)
+
+```bash
+brew install python@3.13 poetry git
+python3 --version    # should be 3.10–3.14
+poetry --version
+```
+
 ### Fresh machine — one-shot setup
 
 This installs both this UI **and** the converter it drives, side-by-side.
 
 ```bash
 # Pick a parent folder for both repos
-cd ~/Documents/Projects
+mkdir -p ~/Documents/Projects && cd ~/Documents/Projects
 
 # 1) Core converter
 git clone https://github.com/Matt2Harrington/vision-utils.git
@@ -60,6 +68,10 @@ poetry run spatialconverterui
 On first launch, click **Browse…** and point **spatialconverter path** at the
 outer `vision-utils/spatialconverter/` directory (the one with `pyproject.toml`).
 The path persists between launches.
+
+> **First conversion is slow.** Hugging Face will download the Depth-Anything-V2
+> weights on the first run (~1.3 GB for Large, ~100 MB for Small). Subsequent
+> runs use the cached model.
 
 In the UI:
 
@@ -118,6 +130,27 @@ and `from spatialconverter.X import Y` all resolve.
 
 If the process exits non-zero, the item is retried up to `max_retries` times
 before being marked Failed. The queue then continues with the next item.
+
+## Troubleshooting
+
+If a conversion fails, check the in-app console pane for one of these markers:
+
+- **`ERROR: could not resolve spatialconverter's venv interpreter`** —
+  `poetry install` was never run inside `vision-utils/spatialconverter/`.
+  Re-run step 1 of the install block.
+- **`ModuleNotFoundError: No module named 'transformers'`** — the from-source
+  transformers install was skipped or failed. Re-run:
+  ```bash
+  cd ~/Documents/Projects/vision-utils/spatialconverter
+  poetry run pip install -q "git+https://github.com/huggingface/transformers.git"
+  ```
+- **`Using interpreter: …spatialconverterui…`** at the top of the log —
+  the path field points at the wrong directory. It should be the **outer**
+  `spatialconverter/` (the one with `pyproject.toml`), not the inner one and
+  not the UI repo.
+- **Output looks "way too zoomed in" on Vision Pro** — the source isn't
+  iPhone-15-Pro footage. Bump **Horizontal FOV** to 90 (general widescreen),
+  110-120 (action cam / ultrawide), or whatever matches your source lens.
 
 ## Notes
 
