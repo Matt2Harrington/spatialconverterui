@@ -17,9 +17,33 @@ On failure, it automatically retries up to a configurable number of times.
 
 ## Install
 
-Requires Python 3.10+ and [poetry](https://python-poetry.org/) on PATH.
-You also need a working [spatialconverter](https://github.com/Matt2Harrington/vision-utils/tree/main/spatialconverter)
-checkout — see its README for the one-time setup.
+**Requirements:** macOS, Python 3.10–3.14, [poetry](https://python-poetry.org/)
+on PATH, and git. A Vision-Pro-capable Apple Silicon machine is recommended —
+the depth-estimation model is heavy.
+
+### Fresh machine — one-shot setup
+
+This installs both this UI **and** the converter it drives, side-by-side.
+
+```bash
+# Pick a parent folder for both repos
+cd ~/Documents/Projects
+
+# 1) Core converter
+git clone https://github.com/Matt2Harrington/vision-utils.git
+cd vision-utils/spatialconverter
+poetry install
+# transformers needs a from-source install (poetry can't resolve it cleanly)
+poetry run pip install -q "git+https://github.com/huggingface/transformers.git"
+cd ../..
+
+# 2) This UI
+git clone https://github.com/Matt2Harrington/spatialconverterui.git
+cd spatialconverterui
+poetry install
+```
+
+### Already have vision-utils checked out
 
 ```bash
 git clone https://github.com/Matt2Harrington/spatialconverterui.git
@@ -33,10 +57,14 @@ poetry install
 poetry run spatialconverterui
 ```
 
+On first launch, click **Browse…** and point **spatialconverter path** at the
+outer `vision-utils/spatialconverter/` directory (the one with `pyproject.toml`).
+The path persists between launches.
+
 In the UI:
 
-1. Set **spatialconverter path** to the outer `spatialconverter/` directory
-   (the one containing `pyproject.toml`).
+1. Confirm **spatialconverter path** is set to the outer `spatialconverter/`
+   directory (the one containing `pyproject.toml`).
 2. Adjust runtime settings (all persist between launches):
 
    **Conversion settings** (control speed / quality of the depth-shift step)
