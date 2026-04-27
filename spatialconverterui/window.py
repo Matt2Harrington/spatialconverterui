@@ -91,6 +91,23 @@ class MainWindow(QMainWindow):
         shifts_row.addWidget(self.shift_right_spin)
         shifts_row.addStretch(1)
 
+        self.zoom_spin = QDoubleSpinBox()
+        self.zoom_spin.setRange(0.1, 4.0)
+        self.zoom_spin.setDecimals(2)
+        self.zoom_spin.setSingleStep(0.05)
+        self.zoom_spin.setSuffix("×")
+        self.zoom_spin.setToolTip(
+            "Pre-process zoom: >1.0 crops in (zoom in), <1.0 letterboxes (zoom out), 1.0 unchanged"
+        )
+        self.zoom_spin.setValue(float(self.settings.value("zoom", 1.0)))
+
+        self.stereo_format_combo = QComboBox()
+        self.stereo_format_combo.addItem("Over-Under (top / bottom)", "ou")
+        self.stereo_format_combo.addItem("Side-by-Side (left / right)", "sbs")
+        saved_fmt = self.settings.value("stereo_format", "ou", type=str)
+        idx_fmt = self.stereo_format_combo.findData(saved_fmt)
+        self.stereo_format_combo.setCurrentIndex(idx_fmt if idx_fmt >= 0 else 0)
+
         settings_box = QGroupBox("Conversion settings")
         form = QFormLayout(settings_box)
         form.addRow("spatialconverter path:", path_row)
@@ -98,6 +115,8 @@ class MainWindow(QMainWindow):
         form.addRow("Depth model:", self.model_combo)
         form.addRow("Target FPS (0 = source):", self.fps_spin)
         form.addRow("Eye shifts:", shifts_row)
+        form.addRow("Output zoom:", self.zoom_spin)
+        form.addRow("Stereo format:", self.stereo_format_combo)
 
         # ---- Spatial output settings ----
         self.hfov_spin = QDoubleSpinBox()
@@ -133,6 +152,14 @@ class MainWindow(QMainWindow):
         )
         self.spatial_extra_edit.setPlaceholderText('e.g. --primary right')
 
+        self.reset_iphone_btn = QPushButton("Reset to iPhone 15 Pro")
+        self.reset_iphone_btn.setToolTip(
+            "Restore HFOV / camera distance / horizontal adjust / projection / extra args "
+            "to the iPhone 15 Pro native spatial recording values "
+            "(63.4° / 19.24 mm / 0.02 / rect)."
+        )
+        self.reset_iphone_btn.clicked.connect(self._reset_to_iphone_defaults)
+
         spatial_box = QGroupBox("Spatial output (./spatial flags)")
         spatial_form = QFormLayout(spatial_box)
         spatial_form.addRow("Horizontal FOV:", self.hfov_spin)
@@ -140,6 +167,7 @@ class MainWindow(QMainWindow):
         spatial_form.addRow("Horizontal adjust:", self.hadjust_spin)
         spatial_form.addRow("Projection:", self.projection_combo)
         spatial_form.addRow("Extra args:", self.spatial_extra_edit)
+        spatial_form.addRow("", self.reset_iphone_btn)
 
         # group the two settings boxes side-by-side so vertical space is preserved
         settings_row = QHBoxLayout()
@@ -266,6 +294,8 @@ class MainWindow(QMainWindow):
         hadjust = float(self.hadjust_spin.value())
         projection = self.projection_combo.currentText().strip() or "rect"
         spatial_extra = self.spatial_extra_edit.text()
+        zoom = float(self.zoom_spin.value())
+        stereo_format = self.stereo_format_combo.currentData() or "ou"
 
         self.settings.setValue("converter_path", path)
         self.settings.setValue("max_retries", self.retries_spin.value())
@@ -278,6 +308,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("hadjust", hadjust)
         self.settings.setValue("projection", projection)
         self.settings.setValue("spatial_extra", spatial_extra)
+        self.settings.setValue("zoom", zoom)
+        self.settings.setValue("stereo_format", stereo_format)
 
         self.queue.reset_statuses()
         self.log.clear()
@@ -296,6 +328,8 @@ class MainWindow(QMainWindow):
             hadjust=hadjust,
             projection=projection,
             spatial_extra=spatial_extra,
+            zoom=zoom,
+            stereo_format=stereo_format,
         )
         self.runner.item_started.connect(self._on_item_started)
         self.runner.item_finished.connect(self._on_item_finished)
@@ -329,6 +363,18 @@ class MainWindow(QMainWindow):
         self.hadjust_spin.setEnabled(not running)
         self.projection_combo.setEnabled(not running)
         self.spatial_extra_edit.setEnabled(not running)
+        self.zoom_spin.setEnabled(not running)
+        self.stereo_format_combo.setEnabled(not running)
+        self.reset_iphone_btn.setEnabled(not running)
+
+    def _reset_to_iphone_defaults(self):
+        """Restore iPhone 15 Pro native spatial recording values."""
+        self.hfov_spin.setValue(63.4)
+        self.cdist_spin.setValue(19.24)
+        self.hadjust_spin.setValue(0.02)
+        self.projection_combo.setCurrentText("rect")
+        self.spatial_extra_edit.setText("")
+        self.statusBar().showMessage("Spatial output reset to iPhone 15 Pro defaults.", 3000)
 
     def _reset_progress_panel(self):
         self.current_label.setText("No item running")

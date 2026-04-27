@@ -46,6 +46,8 @@ class QueueRunner(QThread):
         hadjust: float = 0.02,
         projection: str = "rect",
         spatial_extra: str = "",
+        zoom: float = 1.0,
+        stereo_format: str = "ou",
     ):
         super().__init__()
         self.items = list(items)
@@ -60,6 +62,8 @@ class QueueRunner(QThread):
         self.hadjust = hadjust
         self.projection = projection
         self.spatial_extra = spatial_extra
+        self.zoom = zoom
+        self.stereo_format = stereo_format
         self._stop = False
         self._proc: subprocess.Popen | None = None
         self._python_exe: str = ""
@@ -140,6 +144,8 @@ class QueueRunner(QThread):
             "--cdist", str(self.cdist),
             "--hadjust", str(self.hadjust),
             "--projection", self.projection,
+            "--zoom", str(self.zoom),
+            "--stereo-format", self.stereo_format,
         ]
         if self.target_fps and self.target_fps > 0:
             cmd += ["--target-fps", str(self.target_fps)]
