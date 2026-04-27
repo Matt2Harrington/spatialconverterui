@@ -86,7 +86,23 @@ In the UI:
 
 1. Confirm **spatialconverter path** is set to the outer `spatialconverter/`
    directory (the one containing `pyproject.toml`).
-2. Adjust runtime settings (all persist between launches):
+2. (Optional) pick a **Preset** from the dropdown to bulk-apply settings:
+
+   | Preset | Sets |
+   |---|---|
+   | iPhone 15 Pro (full spatial reset) | HFOV 63.4°, cdist 19.24, hadjust 0.02, projection rect, extra args empty |
+   | Widescreen lens (90° HFOV) | HFOV 90°, projection rect |
+   | Action camera (120° HFOV, rect) | HFOV 120°, projection rect |
+   | Fisheye / panoramic (170°, fisheye) | HFOV 170°, projection fisheye |
+   | Fast preview (Small model, 24 fps) | Depth model Small, target fps 24 |
+   | Stronger 3D (shifts 0 / 100) | Eye shifts L=0, R=100 |
+   | VR side-by-side stereo (90° HFOV, SBS) | HFOV 90°, stereo format SBS |
+
+   Each preset only changes the fields relevant to its name — everything
+   else stays as you have it. The dropdown returns to "— Choose a preset —"
+   after each apply, so re-selecting re-applies.
+
+3. Adjust individual settings (all persist between launches):
 
    **Conversion settings** (control speed / quality of the depth-shift step)
    - **Max retries on failure** — default 3.
@@ -110,8 +126,8 @@ In the UI:
    - **Extra args** — free-form flags appended verbatim to the `./spatial
      make` command (e.g. `--primary right`). For anything the dropdowns
      don't cover.
-3. Drag video files into the queue (or use **Add Files…**).
-4. Hit **Start**. Use **Stop** to halt after the current item finishes.
+4. Drag video files into the queue (or use **Add Files…**).
+5. Hit **Start**. Use **Stop** to halt after the current item finishes.
 
 ## How it runs each job
 

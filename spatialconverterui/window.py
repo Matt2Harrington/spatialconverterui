@@ -246,8 +246,26 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
 
+        # ---- preset combo (applies a bundle of settings at once) ----
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItem("— Choose a preset —", None)
+        self.preset_combo.addItem("iPhone 15 Pro (full spatial reset)", "iphone")
+        self.preset_combo.addItem("Widescreen lens (90° HFOV)", "widescreen")
+        self.preset_combo.addItem("Action camera (120° HFOV, rect)", "action_cam")
+        self.preset_combo.addItem("Fisheye / panoramic (170° HFOV, fisheye)", "fisheye")
+        self.preset_combo.addItem("Fast preview (Small model, 24 fps)", "fast_preview")
+        self.preset_combo.addItem("Stronger 3D (shifts 0 / 100)", "strong_3d")
+        self.preset_combo.addItem("VR side-by-side stereo (90° HFOV, SBS)", "vr_sbs")
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_selected)
+
+        preset_row = QHBoxLayout()
+        preset_label = QLabel("Preset:")
+        preset_row.addWidget(preset_label)
+        preset_row.addWidget(self.preset_combo, 1)
+
         central = QWidget()
         layout = QVBoxLayout(central)
+        layout.addLayout(preset_row)
         layout.addLayout(settings_row)
         layout.addWidget(splitter, 1)
         self.setCentralWidget(central)
@@ -366,6 +384,7 @@ class MainWindow(QMainWindow):
         self.zoom_spin.setEnabled(not running)
         self.stereo_format_combo.setEnabled(not running)
         self.reset_iphone_btn.setEnabled(not running)
+        self.preset_combo.setEnabled(not running)
 
     def _reset_to_iphone_defaults(self):
         """Restore iPhone 15 Pro native spatial recording values."""
@@ -375,6 +394,58 @@ class MainWindow(QMainWindow):
         self.projection_combo.setCurrentText("rect")
         self.spatial_extra_edit.setText("")
         self.statusBar().showMessage("Spatial output reset to iPhone 15 Pro defaults.", 3000)
+
+    def _on_preset_selected(self, idx: int):
+        key = self.preset_combo.itemData(idx)
+        if not key:
+            return
+        self._apply_preset(key)
+        # Reset combo back to placeholder without re-firing the handler
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.setCurrentIndex(0)
+        self.preset_combo.blockSignals(False)
+
+    def _apply_preset(self, key: str):
+        """Apply a named bundle of settings. Each preset only touches the
+        fields relevant to its name; everything else is left as-is."""
+        msg = ""
+        if key == "iphone":
+            self.hfov_spin.setValue(63.4)
+            self.cdist_spin.setValue(19.24)
+            self.hadjust_spin.setValue(0.02)
+            self.projection_combo.setCurrentText("rect")
+            self.spatial_extra_edit.setText("")
+            msg = "iPhone 15 Pro defaults applied."
+        elif key == "widescreen":
+            self.hfov_spin.setValue(90.0)
+            self.projection_combo.setCurrentText("rect")
+            msg = "Widescreen 90° HFOV applied."
+        elif key == "action_cam":
+            self.hfov_spin.setValue(120.0)
+            self.projection_combo.setCurrentText("rect")
+            msg = "Action-cam 120° HFOV applied."
+        elif key == "fisheye":
+            self.hfov_spin.setValue(170.0)
+            self.projection_combo.setCurrentText("fisheye")
+            msg = "Fisheye 170° applied."
+        elif key == "fast_preview":
+            i = self.model_combo.findData("small")
+            if i >= 0:
+                self.model_combo.setCurrentIndex(i)
+            self.fps_spin.setValue(24.0)
+            msg = "Fast preview (Small model, 24 fps) applied."
+        elif key == "strong_3d":
+            self.shift_left_spin.setValue(0)
+            self.shift_right_spin.setValue(100)
+            msg = "Stronger 3D shifts (0 / 100) applied."
+        elif key == "vr_sbs":
+            self.hfov_spin.setValue(90.0)
+            i = self.stereo_format_combo.findData("sbs")
+            if i >= 0:
+                self.stereo_format_combo.setCurrentIndex(i)
+            msg = "VR side-by-side stereo at 90° applied."
+        if msg:
+            self.statusBar().showMessage(f"Preset: {msg}", 3000)
 
     def _reset_progress_panel(self):
         self.current_label.setText("No item running")
