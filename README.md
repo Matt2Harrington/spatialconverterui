@@ -25,9 +25,15 @@ the depth-estimation model is heavy.
 
 ```bash
 brew install python@3.13 poetry git
-python3 --version    # should be 3.10–3.14
+python3.13 --version   # confirm it's installed
 poetry --version
 ```
+
+> **Use Python 3.13, not 3.14.** Homebrew's `python@3.14` ships a `pyexpat`
+> built against a newer `libexpat` than macOS provides, which crashes any
+> Python tool that touches XML (`Symbol not found:
+> _XML_SetAllocTrackerActivationThreshold`). 3.13 is stable and matches the
+> project's supported range.
 
 ### Fresh machine — one-shot setup
 
@@ -40,6 +46,7 @@ mkdir -p ~/Documents/Projects && cd ~/Documents/Projects
 # 1) Core converter
 git clone https://github.com/Matt2Harrington/vision-utils.git
 cd vision-utils/spatialconverter
+poetry env use python3.13
 poetry install
 # transformers needs a from-source install (poetry can't resolve it cleanly)
 poetry run pip install -q "git+https://github.com/huggingface/transformers.git"
@@ -48,6 +55,7 @@ cd ../..
 # 2) This UI
 git clone https://github.com/Matt2Harrington/spatialconverterui.git
 cd spatialconverterui
+poetry env use python3.13
 poetry install
 ```
 
@@ -56,6 +64,7 @@ poetry install
 ```bash
 git clone https://github.com/Matt2Harrington/spatialconverterui.git
 cd spatialconverterui
+poetry env use python3.13
 poetry install
 ```
 
@@ -135,6 +144,17 @@ before being marked Failed. The queue then continues with the next item.
 
 If a conversion fails, check the in-app console pane for one of these markers:
 
+- **`Symbol not found: _XML_SetAllocTrackerActivationThreshold`** during
+  `poetry install` or `poetry run` — Homebrew's `python@3.14` is broken on
+  macOS. Switch to 3.13:
+  ```bash
+  brew install python@3.13
+  brew unlink python@3.14   # optional
+  cd <project-dir>
+  poetry env remove --all
+  poetry env use python3.13
+  poetry install
+  ```
 - **`ERROR: could not resolve spatialconverter's venv interpreter`** —
   `poetry install` was never run inside `vision-utils/spatialconverter/`.
   Re-run step 1 of the install block.
