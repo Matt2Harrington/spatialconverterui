@@ -48,6 +48,7 @@ class QueueRunner(QThread):
         spatial_extra: str = "",
         zoom: float = 1.0,
         stereo_format: str = "ou",
+        spatial_enabled: bool = True,
     ):
         super().__init__()
         self.items = list(items)
@@ -64,6 +65,7 @@ class QueueRunner(QThread):
         self.spatial_extra = spatial_extra
         self.zoom = zoom
         self.stereo_format = stereo_format
+        self.spatial_enabled = spatial_enabled
         self._stop = False
         self._proc: subprocess.Popen | None = None
         self._python_exe: str = ""
@@ -151,6 +153,8 @@ class QueueRunner(QThread):
             cmd += ["--target-fps", str(self.target_fps)]
         if self.spatial_extra.strip():
             cmd += ["--spatial-extra", self.spatial_extra.strip()]
+        if not self.spatial_enabled:
+            cmd += ["--no-spatial"]
 
         env = self._clean_env()
         # main.py does `from spatialconverter.X import Y`, so the *outer*

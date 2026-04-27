@@ -115,6 +115,12 @@ In the UI:
      Defaults 10 / 50. Larger gap = more pronounced 3D effect.
 
    **Spatial output** (passed verbatim to Mike Swanson's `./spatial` tool)
+   - **Generate Apple spatial output** — checkbox at the top of the group.
+     When **off**, the pipeline stops after producing the raw stereo file
+     (`over_under.mp4`, in either OU or SBS layout) and skips the Apple
+     spatial tagging entirely. Use this when targeting Moon Player or any
+     non-Apple-spatial workflow — all the FOV/projection fields below the
+     checkbox are greyed out since they don't apply.
    - **Horizontal FOV** — degrees. Default `63.4` (iPhone 15 Pro main lens).
      If footage looks "too zoomed in" on Vision Pro, raise this. Rough
      starting points: 90° for general widescreen, 110-120° for action

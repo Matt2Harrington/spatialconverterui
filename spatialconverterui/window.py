@@ -3,6 +3,7 @@ import os
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -160,14 +161,28 @@ class MainWindow(QMainWindow):
         )
         self.reset_iphone_btn.clicked.connect(self._reset_to_iphone_defaults)
 
+        self.spatial_enabled_check = QCheckBox("Generate Apple spatial output (.mov)")
+        self.spatial_enabled_check.setToolTip(
+            "When off, the pipeline stops after producing the raw stereo file "
+            "(over_under.mp4 with OU or SBS layout) and skips ./spatial tagging. "
+            "Use this when targeting Moon Player or other non-Apple-spatial workflows."
+        )
+        self.spatial_enabled_check.setChecked(
+            self.settings.value("spatial_enabled", True, type=bool)
+        )
+        self.spatial_enabled_check.toggled.connect(self._on_spatial_toggled)
+
         spatial_box = QGroupBox("Spatial output (./spatial flags)")
         spatial_form = QFormLayout(spatial_box)
+        spatial_form.addRow(self.spatial_enabled_check)
         spatial_form.addRow("Horizontal FOV:", self.hfov_spin)
         spatial_form.addRow("Camera distance:", self.cdist_spin)
         spatial_form.addRow("Horizontal adjust:", self.hadjust_spin)
         spatial_form.addRow("Projection:", self.projection_combo)
         spatial_form.addRow("Extra args:", self.spatial_extra_edit)
         spatial_form.addRow("", self.reset_iphone_btn)
+        # Apply current toggle state to dependent widgets right after construction.
+        self._apply_spatial_enabled(self.spatial_enabled_check.isChecked())
 
         # group the two settings boxes side-by-side so vertical space is preserved
         settings_row = QHBoxLayout()
@@ -314,6 +329,7 @@ class MainWindow(QMainWindow):
         spatial_extra = self.spatial_extra_edit.text()
         zoom = float(self.zoom_spin.value())
         stereo_format = self.stereo_format_combo.currentData() or "ou"
+        spatial_enabled = self.spatial_enabled_check.isChecked()
 
         self.settings.setValue("converter_path", path)
         self.settings.setValue("max_retries", self.retries_spin.value())
@@ -328,6 +344,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("spatial_extra", spatial_extra)
         self.settings.setValue("zoom", zoom)
         self.settings.setValue("stereo_format", stereo_format)
+        self.settings.setValue("spatial_enabled", spatial_enabled)
 
         self.queue.reset_statuses()
         self.log.clear()
@@ -348,6 +365,7 @@ class MainWindow(QMainWindow):
             spatial_extra=spatial_extra,
             zoom=zoom,
             stereo_format=stereo_format,
+            spatial_enabled=spatial_enabled,
         )
         self.runner.item_started.connect(self._on_item_started)
         self.runner.item_finished.connect(self._on_item_finished)
@@ -383,8 +401,32 @@ class MainWindow(QMainWindow):
         self.spatial_extra_edit.setEnabled(not running)
         self.zoom_spin.setEnabled(not running)
         self.stereo_format_combo.setEnabled(not running)
-        self.reset_iphone_btn.setEnabled(not running)
         self.preset_combo.setEnabled(not running)
+        self.spatial_enabled_check.setEnabled(not running)
+        # When running, also keep spatial-dependent fields disabled regardless
+        # of the checkbox; when idle, restore them based on the checkbox state.
+        if running:
+            self.reset_iphone_btn.setEnabled(False)
+        else:
+            self._apply_spatial_enabled(self.spatial_enabled_check.isChecked())
+
+    def _on_spatial_toggled(self, checked: bool):
+        self._apply_spatial_enabled(checked)
+        self.statusBar().showMessage(
+            "Spatial output enabled."
+            if checked
+            else "Spatial output disabled — pipeline will stop at raw stereo file.",
+            3000,
+        )
+
+    def _apply_spatial_enabled(self, enabled: bool):
+        """Enable/disable the spatial-only fields based on the master checkbox."""
+        self.hfov_spin.setEnabled(enabled)
+        self.cdist_spin.setEnabled(enabled)
+        self.hadjust_spin.setEnabled(enabled)
+        self.projection_combo.setEnabled(enabled)
+        self.spatial_extra_edit.setEnabled(enabled)
+        self.reset_iphone_btn.setEnabled(enabled)
 
     def _reset_to_iphone_defaults(self):
         """Restore iPhone 15 Pro native spatial recording values."""
