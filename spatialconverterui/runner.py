@@ -281,7 +281,11 @@ class PreviewRunner(QThread):
         spatial_extra: str = "",
         zoom: float = 1.0,
         stereo_format: str = "ou",
+        spatial_enabled: bool = True,
         preview_time: float | None = None,
+        clip_mode: bool = False,
+        clip_duration: float = 3.0,
+        clip_start: float | None = None,
     ):
         super().__init__()
         self.video_path = video_path
@@ -297,7 +301,11 @@ class PreviewRunner(QThread):
         self.spatial_extra = spatial_extra
         self.zoom = zoom
         self.stereo_format = stereo_format
+        self.spatial_enabled = spatial_enabled
         self.preview_time = preview_time
+        self.clip_mode = clip_mode
+        self.clip_duration = clip_duration
+        self.clip_start = clip_start
         self._proc: subprocess.Popen | None = None
         self._stop = False
 
@@ -331,10 +339,17 @@ class PreviewRunner(QThread):
             "--projection", self.projection,
             "--zoom", str(self.zoom),
             "--stereo-format", self.stereo_format,
-            "--preview",
         ]
-        if self.preview_time is not None:
-            cmd += ["--preview-time", str(self.preview_time)]
+        if not self.spatial_enabled:
+            cmd += ["--no-spatial"]
+        if self.clip_mode:
+            cmd += ["--preview-clip", "--preview-clip-duration", str(self.clip_duration)]
+            if self.clip_start is not None:
+                cmd += ["--preview-clip-start", str(self.clip_start)]
+        else:
+            cmd += ["--preview"]
+            if self.preview_time is not None:
+                cmd += ["--preview-time", str(self.preview_time)]
 
         env = os.environ.copy()
         for key in ("VIRTUAL_ENV", "POETRY_ACTIVE", "PYTHONHOME"):

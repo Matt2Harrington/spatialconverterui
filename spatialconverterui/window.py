@@ -77,6 +77,59 @@ class PreviewDialog(QDialog):
             QMessageBox.warning(self, "Open failed", f"Could not open Finder:\n{e}")
 
 
+class ClipPreviewDialog(QDialog):
+    """Lightweight dialog for clip previews — just confirms the path and
+    offers Open / Show in Finder. No embedded video playback."""
+
+    def __init__(self, video_path: str, parent=None):
+        super().__init__(parent)
+        self.video_path = video_path
+        self.setWindowTitle("Preview Clip Ready")
+        self.resize(560, 200)
+
+        title = QLabel("Preview clip rendered with current settings:")
+        path = QLabel(video_path)
+        path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        path.setWordWrap(True)
+        hint = QLabel(
+            "Open it in your usual player (Apple Photos for spatial .mov, "
+            "Moon Player for raw stereo) to evaluate."
+        )
+        hint.setWordWrap(True)
+
+        open_btn = QPushButton("Open")
+        open_btn.clicked.connect(self._open)
+        finder_btn = QPushButton("Show in Finder")
+        finder_btn.clicked.connect(self._show_in_finder)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(open_btn)
+        btn_row.addWidget(finder_btn)
+        btn_row.addWidget(close_btn)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(title)
+        layout.addWidget(path)
+        layout.addStretch(1)
+        layout.addWidget(hint)
+        layout.addLayout(btn_row)
+
+    def _open(self):
+        try:
+            subprocess.run(["open", self.video_path], check=False)
+        except Exception as e:
+            QMessageBox.warning(self, "Open failed", f"Could not open file:\n{e}")
+
+    def _show_in_finder(self):
+        try:
+            subprocess.run(["open", "-R", self.video_path], check=False)
+        except Exception as e:
+            QMessageBox.warning(self, "Open failed", f"Could not open Finder:\n{e}")
+
+
 def _format_eta(seconds: float) -> str:
     if seconds < 0:
         return "ETA: —"
@@ -256,6 +309,13 @@ class MainWindow(QMainWindow):
             "much faster than a full conversion. Useful for tuning HFOV / shifts / zoom before committing."
         )
         self.preview_btn.clicked.connect(self._start_preview)
+        self.preview_clip_btn = QPushButton("Preview Clip")
+        self.preview_clip_btn.setEnabled(False)
+        self.preview_clip_btn.setToolTip(
+            "Render a 3-second clip from the middle of the selected video. Slower than "
+            "a single-frame preview but lets you evaluate motion and audio sync."
+        )
+        self.preview_clip_btn.clicked.connect(self._start_preview_clip)
         self.start_btn = QPushButton("Start")
         self.start_btn.clicked.connect(self._start)
         self.stop_btn = QPushButton("Stop")
@@ -267,6 +327,7 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.clear_btn)
         btn_row.addWidget(self.show_finder_btn)
         btn_row.addWidget(self.preview_btn)
+        btn_row.addWidget(self.preview_clip_btn)
         btn_row.addStretch(1)
         btn_row.addWidget(self.start_btn)
         btn_row.addWidget(self.stop_btn)
@@ -685,7 +746,9 @@ class MainWindow(QMainWindow):
         has_video = 0 <= row < len(self.queue.paths)
         preview_running = bool(self.preview_runner and self.preview_runner.isRunning())
         queue_running = bool(self.runner and self.runner.isRunning())
-        self.preview_btn.setEnabled(has_video and not preview_running and not queue_running)
+        enabled = has_video and not preview_running and not queue_running
+        self.preview_btn.setEnabled(enabled)
+        self.preview_clip_btn.setEnabled(enabled)
 
     def _show_in_finder(self):
         row = self._selected_row()
@@ -706,6 +769,12 @@ class MainWindow(QMainWindow):
     # ---- Preview ----
 
     def _start_preview(self):
+        self._launch_preview(clip_mode=False)
+
+    def _start_preview_clip(self):
+        self._launch_preview(clip_mode=True)
+
+    def _launch_preview(self, clip_mode: bool):
         if self.preview_runner and self.preview_runner.isRunning():
             return
         row = self._selected_row()
@@ -717,8 +786,9 @@ class MainWindow(QMainWindow):
             return
 
         video = self.queue.paths[row]
-        self.statusBar().showMessage(f"Rendering preview for {os.path.basename(video)}…")
-        self.log.appendPlainText(f"--- Preview: {video} ---")
+        kind = "clip" if clip_mode else "frame"
+        self.statusBar().showMessage(f"Rendering {kind} preview for {os.path.basename(video)}…")
+        self.log.appendPlainText(f"--- Preview ({kind}): {video} ---")
 
         self.preview_runner = PreviewRunner(
             video_path=video,
@@ -734,6 +804,9 @@ class MainWindow(QMainWindow):
             spatial_extra=self.spatial_extra_edit.text(),
             zoom=float(self.zoom_spin.value()),
             stereo_format=self.stereo_format_combo.currentData() or "ou",
+            spatial_enabled=self.spatial_enabled_check.isChecked(),
+            clip_mode=clip_mode,
+            clip_duration=3.0,
         )
         self.preview_runner.log_line.connect(self.log.appendPlainText)
         self.preview_runner.finished_ok.connect(self._on_preview_ok)
@@ -742,9 +815,13 @@ class MainWindow(QMainWindow):
         self._update_preview_button()
         self.preview_runner.start()
 
-    def _on_preview_ok(self, png_path: str):
-        self.statusBar().showMessage(f"Preview ready: {png_path}", 5000)
-        dlg = PreviewDialog(png_path, parent=self)
+    def _on_preview_ok(self, output_path: str):
+        self.statusBar().showMessage(f"Preview ready: {output_path}", 5000)
+        # Dispatch by extension: .png → image dialog, video → clip dialog
+        if output_path.lower().endswith(".png"):
+            dlg = PreviewDialog(output_path, parent=self)
+        else:
+            dlg = ClipPreviewDialog(output_path, parent=self)
         dlg.show()
 
     def _on_preview_err(self, msg: str):
