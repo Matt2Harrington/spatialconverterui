@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 
 from PySide6.QtCore import QFileSystemWatcher, QSettings, Qt, QTimer
@@ -241,6 +242,16 @@ class MainWindow(QMainWindow):
             self.settings.value("watch_auto_start", False, type=bool)
         )
 
+        self.watch_archive_check = QCheckBox("Move done files to 'processed/' subfolder")
+        self.watch_archive_check.setToolTip(
+            "When a video sourced from the watch folder finishes successfully, "
+            "move the source file into <watch folder>/processed/ so it won't be "
+            "re-queued. The output files stay where they were created."
+        )
+        self.watch_archive_check.setChecked(
+            self.settings.value("watch_archive", True, type=bool)
+        )
+
         settings_box = QGroupBox("Conversion settings")
         form = QFormLayout(settings_box)
         form.addRow("spatialconverter path:", path_row)
@@ -254,6 +265,7 @@ class MainWindow(QMainWindow):
         form.addRow("Watch folder:", watch_path_row)
         form.addRow("", self.watch_enabled_check)
         form.addRow("", self.watch_auto_start_check)
+        form.addRow("", self.watch_archive_check)
 
         # ---- Spatial output settings ----
         self.hfov_spin = QDoubleSpinBox()
@@ -565,6 +577,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("watch_folder", self.watch_path_edit.text().strip())
         self.settings.setValue("watch_enabled", self.watch_enabled_check.isChecked())
         self.settings.setValue("watch_auto_start", self.watch_auto_start_check.isChecked())
+        self.settings.setValue("watch_archive", self.watch_archive_check.isChecked())
 
         # Only reset rows we're actually going to re-process; leave Done alone.
         self.queue.reset_statuses(skip_statuses=["Done"])
@@ -637,6 +650,7 @@ class MainWindow(QMainWindow):
         self.watch_path_edit.setEnabled(not running)
         self.watch_enabled_check.setEnabled(not running)
         self.watch_auto_start_check.setEnabled(not running)
+        self.watch_archive_check.setEnabled(not running)
         self.auto_open_check.setEnabled(not running)
         self.spatial_enabled_check.setEnabled(not running)
         # When running, also keep spatial-dependent fields disabled regardless
@@ -834,6 +848,51 @@ class MainWindow(QMainWindow):
         queue_row = self._to_queue_row(runner_row)
         self.queue.set_status(queue_row, "Done" if ok else "Failed", message=msg)
         self._update_show_finder_button()
+        if (
+            ok
+            and self.watch_archive_check.isChecked()
+            and self._watch_active_path
+        ):
+            self._archive_done_source(queue_row)
+
+    def _archive_done_source(self, queue_row: int) -> None:
+        """If the source video for `queue_row` is sitting in the active watch
+        folder, move it into <watch folder>/processed/ so it won't be picked
+        up again. No-op for files that aren't in the watch folder."""
+        if not (0 <= queue_row < len(self.queue.paths)):
+            return
+        src = self.queue.paths[queue_row]
+        if not os.path.isfile(src):
+            return
+        try:
+            src_dir = os.path.realpath(os.path.dirname(src))
+            watch_dir = os.path.realpath(self._watch_active_path)
+        except OSError:
+            return
+        if src_dir != watch_dir:
+            return  # not from the active watch folder
+
+        processed_dir = os.path.join(self._watch_active_path, "processed")
+        try:
+            os.makedirs(processed_dir, exist_ok=True)
+        except OSError as e:
+            self.log.appendPlainText(f"WARN: could not create {processed_dir}: {e}")
+            return
+
+        base = os.path.basename(src)
+        dest = os.path.join(processed_dir, base)
+        if os.path.exists(dest):
+            name, ext = os.path.splitext(base)
+            i = 1
+            while os.path.exists(os.path.join(processed_dir, f"{name}_{i}{ext}")):
+                i += 1
+            dest = os.path.join(processed_dir, f"{name}_{i}{ext}")
+
+        try:
+            shutil.move(src, dest)
+            self.log.appendPlainText(f"Archived source: {src} → {dest}")
+        except OSError as e:
+            self.log.appendPlainText(f"WARN: could not move {src} → {dest}: {e}")
 
     def _on_queue_finished(self):
         self._set_running(False)
