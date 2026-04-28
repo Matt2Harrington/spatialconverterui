@@ -101,6 +101,7 @@ In the UI:
    | SBS + Spatial — narrower & closer | HFOV 50°, equirect, SBS, shifts 0/80, spatial on |
    | SBS + Spatial — wider & farther | HFOV 110°, equirect, SBS, shifts 0/20, spatial on |
    | SBS + Spatial — wider & closer | HFOV 110°, equirect, SBS, shifts 0/80, spatial on |
+   | SBS + Spatial — 50% narrower & 25% farther | HFOV 25°, equirect, SBS, shifts 0/15, spatial on |
 
    The four "SBS + Spatial" presets bundle the right combo for VR playback
    (SBS layout + equirect projection + spatial output on). HFOV controls

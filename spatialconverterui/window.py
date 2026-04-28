@@ -287,6 +287,7 @@ class MainWindow(QMainWindow):
         self.preset_combo.addItem("SBS + Spatial — narrower & closer", "sbs_narrow_close")
         self.preset_combo.addItem("SBS + Spatial — wider & farther", "sbs_wide_far")
         self.preset_combo.addItem("SBS + Spatial — wider & closer", "sbs_wide_close")
+        self.preset_combo.addItem("SBS + Spatial — 50% narrower & 25% farther", "sbs_extra_narrow_far")
         self.preset_combo.currentIndexChanged.connect(self._on_preset_selected)
 
         preset_row = QHBoxLayout()
@@ -508,7 +509,10 @@ class MainWindow(QMainWindow):
             if i >= 0:
                 self.stereo_format_combo.setCurrentIndex(i)
             msg = "VR SBS (90° HFOV, equirect, SBS) applied."
-        elif key in ("sbs_narrow_far", "sbs_narrow_close", "sbs_wide_far", "sbs_wide_close"):
+        elif key in (
+            "sbs_narrow_far", "sbs_narrow_close", "sbs_wide_far", "sbs_wide_close",
+            "sbs_extra_narrow_far",
+        ):
             self._apply_sbs_spatial_preset(key)
             msg = ""  # _apply_sbs_spatial_preset handles its own status message
         if msg:
@@ -522,17 +526,24 @@ class MainWindow(QMainWindow):
         stereo_format=SBS, projection=equirect, and force spatial output ON
         so the resulting .mov carries the metadata VR-aware players need.
         """
-        if key.startswith("sbs_narrow"):
-            self.hfov_spin.setValue(50.0)
+        if key == "sbs_extra_narrow_far":
+            # 50% narrower than the "narrower" preset (HFOV 50 → 25),
+            # 25% farther than the "farther" preset (shift gap 20 → 15).
+            self.hfov_spin.setValue(25.0)
+            self.shift_left_spin.setValue(0)
+            self.shift_right_spin.setValue(15)
         else:
-            self.hfov_spin.setValue(110.0)
+            if key.startswith("sbs_narrow"):
+                self.hfov_spin.setValue(50.0)
+            else:
+                self.hfov_spin.setValue(110.0)
 
-        if key.endswith("_far"):
-            self.shift_left_spin.setValue(0)
-            self.shift_right_spin.setValue(20)
-        else:
-            self.shift_left_spin.setValue(0)
-            self.shift_right_spin.setValue(80)
+            if key.endswith("_far"):
+                self.shift_left_spin.setValue(0)
+                self.shift_right_spin.setValue(20)
+            else:
+                self.shift_left_spin.setValue(0)
+                self.shift_right_spin.setValue(80)
 
         self.projection_combo.setCurrentText("equirect")
         i = self.stereo_format_combo.findData("sbs")
@@ -545,6 +556,7 @@ class MainWindow(QMainWindow):
             "sbs_narrow_close": "narrower & closer (HFOV 50, shifts 0/80)",
             "sbs_wide_far": "wider & farther (HFOV 110, shifts 0/20)",
             "sbs_wide_close": "wider & closer (HFOV 110, shifts 0/80)",
+            "sbs_extra_narrow_far": "50% narrower & 25% farther (HFOV 25, shifts 0/15)",
         }
         self.statusBar().showMessage(
             f"Preset: SBS + Spatial — {labels[key]} applied.", 4000
