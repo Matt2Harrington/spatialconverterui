@@ -1,8 +1,36 @@
 import os
 import re
+import signal
 import subprocess
 import time
 from PySide6.QtCore import QThread, Signal
+
+
+def _kill_process_group(proc: "subprocess.Popen | None", sig: int) -> None:
+    """Send `sig` to the process group of `proc`. Safe to call when proc is
+    None or already exited."""
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def _wait_or_kill(proc: "subprocess.Popen", term_grace: float = 2.0, kill_grace: float = 1.0) -> int:
+    """After SIGTERM has been sent, wait up to term_grace for clean exit, then
+    escalate to SIGKILL on the process group and wait kill_grace more.
+    Returns the exit code (-1 if still alive somehow)."""
+    try:
+        return proc.wait(timeout=term_grace)
+    except subprocess.TimeoutExpired:
+        pass
+    _kill_process_group(proc, signal.SIGKILL)
+    try:
+        return proc.wait(timeout=kill_grace)
+    except subprocess.TimeoutExpired:
+        return -1
 
 
 _FRAME_TOTAL_RE = re.compile(r"Processed (\d+) frames")
@@ -74,8 +102,11 @@ class QueueRunner(QThread):
 
     def stop(self) -> None:
         self._stop = True
-        if self._proc and self._proc.poll() is None:
-            self._proc.terminate()
+        # SIGTERM the whole process group so multiprocessing workers and the
+        # ./spatial subprocess go too — not just the wrapper python process.
+        # The runner thread will escalate to SIGKILL if anything hangs past
+        # the grace period.
+        _kill_process_group(self._proc, signal.SIGTERM)
 
     def run(self) -> None:
         cwd = os.path.join(self.converter_path, "spatialconverter")
@@ -176,6 +207,10 @@ class QueueRunner(QThread):
             text=True,
             bufsize=1,
             env=env,
+            # Put the child in its own process group so killing it from
+            # stop() also kills its multiprocessing workers and any further
+            # children (e.g. the ./spatial subprocess).
+            start_new_session=True,
         )
         assert self._proc.stdout is not None
 
@@ -188,7 +223,8 @@ class QueueRunner(QThread):
             line = line.rstrip()
             self.log_line.emit(line)
             if self._stop:
-                self._proc.terminate()
+                # SIGTERM was already sent by stop(); just bail out of
+                # reading. Wait + escalate happens after the loop.
                 break
 
             m = _FRAME_TOTAL_RE.search(line)
@@ -221,6 +257,11 @@ class QueueRunner(QThread):
                     self.item_phase.emit(row, "Encoding video…")
                     encoding_announced = True
 
+        # If we exited the read loop because of a stop request, the SIGTERM
+        # has already been sent. Wait briefly for clean exit, then SIGKILL the
+        # process group if anything is hanging on.
+        if self._stop and self._proc.poll() is None:
+            return _wait_or_kill(self._proc)
         return self._proc.wait()
 
     def _clean_env(self) -> dict[str, str]:
@@ -311,8 +352,9 @@ class PreviewRunner(QThread):
 
     def stop(self) -> None:
         self._stop = True
-        if self._proc and self._proc.poll() is None:
-            self._proc.terminate()
+        # SIGTERM the entire process group to take down workers + ./spatial
+        # along with the wrapper python.
+        _kill_process_group(self._proc, signal.SIGTERM)
 
     def run(self) -> None:
         cwd = os.path.join(self.converter_path, "spatialconverter")
@@ -362,6 +404,7 @@ class PreviewRunner(QThread):
         self._proc = subprocess.Popen(
             cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1, env=env,
+            start_new_session=True,
         )
         assert self._proc.stdout is not None
 
@@ -370,13 +413,16 @@ class PreviewRunner(QThread):
             line = line.rstrip()
             self.log_line.emit(line)
             if self._stop:
-                self._proc.terminate()
+                # SIGTERM was already sent by stop(); just bail out.
                 break
             m = _OUTPUT_RE.search(line)
             if m:
                 png_path = m.group(1)
 
-        rc = self._proc.wait()
+        if self._stop and self._proc.poll() is None:
+            rc = _wait_or_kill(self._proc)
+        else:
+            rc = self._proc.wait()
         if self._stop:
             self.finished_err.emit("preview cancelled")
         elif rc != 0:
