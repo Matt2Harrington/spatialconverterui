@@ -255,3 +255,142 @@ class QueueRunner(QThread):
             self.log_line.emit(f"WARN: resolved interpreter does not exist: {candidate}")
             return ""
         return candidate
+
+
+class PreviewRunner(QThread):
+    """One-shot single-frame preview. Builds the same subprocess command as
+    QueueRunner but with --preview, parses the OUTPUT: line, and emits the
+    PNG path back. No retries, no queue iteration."""
+
+    finished_ok = Signal(str)   # PNG path
+    finished_err = Signal(str)  # error message
+    log_line = Signal(str)
+
+    def __init__(
+        self,
+        video_path: str,
+        converter_path: str,
+        model_size: str = "large",
+        target_fps: float = 0.0,
+        shift_left: int = 10,
+        shift_right: int = 50,
+        hfov: float = 63.4,
+        cdist: float = 19.24,
+        hadjust: float = 0.02,
+        projection: str = "rect",
+        spatial_extra: str = "",
+        zoom: float = 1.0,
+        stereo_format: str = "ou",
+        preview_time: float | None = None,
+    ):
+        super().__init__()
+        self.video_path = video_path
+        self.converter_path = converter_path
+        self.model_size = model_size
+        self.target_fps = target_fps
+        self.shift_left = shift_left
+        self.shift_right = shift_right
+        self.hfov = hfov
+        self.cdist = cdist
+        self.hadjust = hadjust
+        self.projection = projection
+        self.spatial_extra = spatial_extra
+        self.zoom = zoom
+        self.stereo_format = stereo_format
+        self.preview_time = preview_time
+        self._proc: subprocess.Popen | None = None
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+        if self._proc and self._proc.poll() is None:
+            self._proc.terminate()
+
+    def run(self) -> None:
+        cwd = os.path.join(self.converter_path, "spatialconverter")
+        if not os.path.isdir(cwd):
+            self.finished_err.emit(f"inner spatialconverter dir not found at {cwd}")
+            return
+
+        python_exe = self._resolve_converter_python()
+        if not python_exe:
+            self.finished_err.emit(
+                f"could not resolve spatialconverter's venv. Run `cd {self.converter_path} && poetry install`."
+            )
+            return
+
+        cmd = [
+            python_exe, "main.py",
+            "--video", os.path.abspath(self.video_path),
+            "--model-size", self.model_size,
+            "--shift-left", str(self.shift_left),
+            "--shift-right", str(self.shift_right),
+            "--hfov", str(self.hfov),
+            "--cdist", str(self.cdist),
+            "--hadjust", str(self.hadjust),
+            "--projection", self.projection,
+            "--zoom", str(self.zoom),
+            "--stereo-format", self.stereo_format,
+            "--preview",
+        ]
+        if self.preview_time is not None:
+            cmd += ["--preview-time", str(self.preview_time)]
+
+        env = os.environ.copy()
+        for key in ("VIRTUAL_ENV", "POETRY_ACTIVE", "PYTHONHOME"):
+            env.pop(key, None)
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            self.converter_path + (os.pathsep + existing if existing else "")
+        )
+
+        self._proc = subprocess.Popen(
+            cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, env=env,
+        )
+        assert self._proc.stdout is not None
+
+        png_path: str | None = None
+        for line in self._proc.stdout:
+            line = line.rstrip()
+            self.log_line.emit(line)
+            if self._stop:
+                self._proc.terminate()
+                break
+            m = _OUTPUT_RE.search(line)
+            if m:
+                png_path = m.group(1)
+
+        rc = self._proc.wait()
+        if self._stop:
+            self.finished_err.emit("preview cancelled")
+        elif rc != 0:
+            self.finished_err.emit(f"preview exited with code {rc}")
+        elif not png_path or not os.path.exists(png_path):
+            self.finished_err.emit("preview finished but no OUTPUT: line was found in the log")
+        else:
+            self.finished_ok.emit(png_path)
+
+    def _clean_env(self) -> dict[str, str]:
+        env = os.environ.copy()
+        for key in ("VIRTUAL_ENV", "POETRY_ACTIVE", "PYTHONHOME"):
+            env.pop(key, None)
+        return env
+
+    def _resolve_converter_python(self) -> str:
+        try:
+            result = subprocess.run(
+                ["poetry", "env", "info", "-e"],
+                cwd=self.converter_path,
+                capture_output=True,
+                text=True,
+                env=self._clean_env(),
+                timeout=30,
+            )
+        except Exception as e:
+            self.log_line.emit(f"WARN: `poetry env info -e` failed: {e}")
+            return ""
+        candidate = (result.stdout or "").strip()
+        if candidate and os.path.exists(candidate):
+            return candidate
+        return ""

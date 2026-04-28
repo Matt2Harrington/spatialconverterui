@@ -2,10 +2,11 @@ import os
 import subprocess
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QFontDatabase, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QStatusBar,
@@ -26,7 +28,53 @@ from PySide6.QtWidgets import (
 )
 
 from .queue_widget import QueueTable, VIDEO_EXTS
-from .runner import QueueRunner
+from .runner import PreviewRunner, QueueRunner
+
+
+class PreviewDialog(QDialog):
+    """Modeless window that displays the preview PNG with a Show in Finder button."""
+
+    def __init__(self, png_path: str, parent=None):
+        super().__init__(parent)
+        self.png_path = png_path
+        self.setWindowTitle(f"Preview — {os.path.basename(png_path)}")
+        self.resize(1200, 720)
+
+        pixmap = QPixmap(png_path)
+        if pixmap.isNull():
+            label = QLabel(f"Failed to load preview image:\n{png_path}")
+        else:
+            label = QLabel()
+            label.setPixmap(pixmap)
+            label.setAlignment(Qt.AlignCenter)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(label)
+
+        info = QLabel(png_path)
+        info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        info.setWordWrap(True)
+
+        show_btn = QPushButton("Show in Finder")
+        show_btn.clicked.connect(self._show_in_finder)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(info, 1)
+        btn_row.addWidget(show_btn)
+        btn_row.addWidget(close_btn)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(scroll, 1)
+        layout.addLayout(btn_row)
+
+    def _show_in_finder(self):
+        try:
+            subprocess.run(["open", "-R", self.png_path], check=False)
+        except Exception as e:
+            QMessageBox.warning(self, "Open failed", f"Could not open Finder:\n{e}")
 
 
 def _format_eta(seconds: float) -> str:
@@ -201,6 +249,13 @@ class MainWindow(QMainWindow):
         self.show_finder_btn.setEnabled(False)
         self.show_finder_btn.setToolTip("Reveal the selected item's output file in Finder")
         self.show_finder_btn.clicked.connect(self._show_in_finder)
+        self.preview_btn = QPushButton("Preview")
+        self.preview_btn.setEnabled(False)
+        self.preview_btn.setToolTip(
+            "Render a single frame of the selected video with the current settings — "
+            "much faster than a full conversion. Useful for tuning HFOV / shifts / zoom before committing."
+        )
+        self.preview_btn.clicked.connect(self._start_preview)
         self.start_btn = QPushButton("Start")
         self.start_btn.clicked.connect(self._start)
         self.stop_btn = QPushButton("Stop")
@@ -211,6 +266,7 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.add_btn)
         btn_row.addWidget(self.clear_btn)
         btn_row.addWidget(self.show_finder_btn)
+        btn_row.addWidget(self.preview_btn)
         btn_row.addStretch(1)
         btn_row.addWidget(self.start_btn)
         btn_row.addWidget(self.stop_btn)
@@ -304,6 +360,7 @@ class MainWindow(QMainWindow):
 
         self.setStatusBar(QStatusBar())
         self.runner: QueueRunner | None = None
+        self.preview_runner: PreviewRunner | None = None
 
     # ---- actions ----
 
@@ -431,6 +488,8 @@ class MainWindow(QMainWindow):
             self.reset_iphone_btn.setEnabled(False)
         else:
             self._apply_spatial_enabled(self.spatial_enabled_check.isChecked())
+        # Preview button respects the queue running state too.
+        self._update_preview_button()
 
     def _on_spatial_toggled(self, checked: bool):
         self._apply_spatial_enabled(checked)
@@ -619,6 +678,14 @@ class MainWindow(QMainWindow):
         row = self._selected_row()
         path = self._row_outputs.get(row)
         self.show_finder_btn.setEnabled(bool(path) and os.path.exists(path))
+        self._update_preview_button()
+
+    def _update_preview_button(self):
+        row = self._selected_row()
+        has_video = 0 <= row < len(self.queue.paths)
+        preview_running = bool(self.preview_runner and self.preview_runner.isRunning())
+        queue_running = bool(self.runner and self.runner.isRunning())
+        self.preview_btn.setEnabled(has_video and not preview_running and not queue_running)
 
     def _show_in_finder(self):
         row = self._selected_row()
@@ -635,6 +702,54 @@ class MainWindow(QMainWindow):
             subprocess.run(["open", "-R", path], check=False)
         except Exception as e:
             QMessageBox.warning(self, "Open failed", f"Could not open Finder:\n{e}")
+
+    # ---- Preview ----
+
+    def _start_preview(self):
+        if self.preview_runner and self.preview_runner.isRunning():
+            return
+        row = self._selected_row()
+        if row < 0 or row >= len(self.queue.paths):
+            return
+        path = self.path_edit.text().strip()
+        if not path:
+            QMessageBox.warning(self, "Missing path", "Set the spatialconverter path first.")
+            return
+
+        video = self.queue.paths[row]
+        self.statusBar().showMessage(f"Rendering preview for {os.path.basename(video)}…")
+        self.log.appendPlainText(f"--- Preview: {video} ---")
+
+        self.preview_runner = PreviewRunner(
+            video_path=video,
+            converter_path=path,
+            model_size=self.model_combo.currentData(),
+            target_fps=float(self.fps_spin.value()),
+            shift_left=int(self.shift_left_spin.value()),
+            shift_right=int(self.shift_right_spin.value()),
+            hfov=float(self.hfov_spin.value()),
+            cdist=float(self.cdist_spin.value()),
+            hadjust=float(self.hadjust_spin.value()),
+            projection=self.projection_combo.currentText().strip() or "rect",
+            spatial_extra=self.spatial_extra_edit.text(),
+            zoom=float(self.zoom_spin.value()),
+            stereo_format=self.stereo_format_combo.currentData() or "ou",
+        )
+        self.preview_runner.log_line.connect(self.log.appendPlainText)
+        self.preview_runner.finished_ok.connect(self._on_preview_ok)
+        self.preview_runner.finished_err.connect(self._on_preview_err)
+        self.preview_runner.finished.connect(self._update_preview_button)
+        self._update_preview_button()
+        self.preview_runner.start()
+
+    def _on_preview_ok(self, png_path: str):
+        self.statusBar().showMessage(f"Preview ready: {png_path}", 5000)
+        dlg = PreviewDialog(png_path, parent=self)
+        dlg.show()
+
+    def _on_preview_err(self, msg: str):
+        self.statusBar().showMessage(f"Preview failed: {msg}", 5000)
+        QMessageBox.warning(self, "Preview failed", msg)
 
     def closeEvent(self, event):
         if self.runner and self.runner.isRunning():
