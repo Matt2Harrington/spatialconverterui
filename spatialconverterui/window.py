@@ -282,6 +282,11 @@ class MainWindow(QMainWindow):
         self.preset_combo.addItem("Fast preview (Small model, 24 fps)", "fast_preview")
         self.preset_combo.addItem("Stronger 3D (shifts 0 / 100)", "strong_3d")
         self.preset_combo.addItem("VR side-by-side stereo (90° HFOV, SBS)", "vr_sbs")
+        self.preset_combo.insertSeparator(self.preset_combo.count())
+        self.preset_combo.addItem("SBS + Spatial — narrower & farther", "sbs_narrow_far")
+        self.preset_combo.addItem("SBS + Spatial — narrower & closer", "sbs_narrow_close")
+        self.preset_combo.addItem("SBS + Spatial — wider & farther", "sbs_wide_far")
+        self.preset_combo.addItem("SBS + Spatial — wider & closer", "sbs_wide_close")
         self.preset_combo.currentIndexChanged.connect(self._on_preset_selected)
 
         preset_row = QHBoxLayout()
@@ -503,8 +508,47 @@ class MainWindow(QMainWindow):
             if i >= 0:
                 self.stereo_format_combo.setCurrentIndex(i)
             msg = "VR SBS (90° HFOV, equirect, SBS) applied."
+        elif key in ("sbs_narrow_far", "sbs_narrow_close", "sbs_wide_far", "sbs_wide_close"):
+            self._apply_sbs_spatial_preset(key)
+            msg = ""  # _apply_sbs_spatial_preset handles its own status message
         if msg:
             self.statusBar().showMessage(f"Preset: {msg}", 3000)
+
+    def _apply_sbs_spatial_preset(self, key: str):
+        """SBS + Spatial bundles: 2×2 of {narrower, wider} × {farther, closer}.
+
+        Narrower/wider → HFOV (50 or 110). Farther/closer → eye-shift gap
+        (0/20 = recessed, 0/80 = pops out). All four also set
+        stereo_format=SBS, projection=equirect, and force spatial output ON
+        so the resulting .mov carries the metadata VR-aware players need.
+        """
+        if key.startswith("sbs_narrow"):
+            self.hfov_spin.setValue(50.0)
+        else:
+            self.hfov_spin.setValue(110.0)
+
+        if key.endswith("_far"):
+            self.shift_left_spin.setValue(0)
+            self.shift_right_spin.setValue(20)
+        else:
+            self.shift_left_spin.setValue(0)
+            self.shift_right_spin.setValue(80)
+
+        self.projection_combo.setCurrentText("equirect")
+        i = self.stereo_format_combo.findData("sbs")
+        if i >= 0:
+            self.stereo_format_combo.setCurrentIndex(i)
+        self.spatial_enabled_check.setChecked(True)
+
+        labels = {
+            "sbs_narrow_far": "narrower & farther (HFOV 50, shifts 0/20)",
+            "sbs_narrow_close": "narrower & closer (HFOV 50, shifts 0/80)",
+            "sbs_wide_far": "wider & farther (HFOV 110, shifts 0/20)",
+            "sbs_wide_close": "wider & closer (HFOV 110, shifts 0/80)",
+        }
+        self.statusBar().showMessage(
+            f"Preset: SBS + Spatial — {labels[key]} applied.", 4000
+        )
 
     def _reset_progress_panel(self):
         self.current_label.setText("No item running")

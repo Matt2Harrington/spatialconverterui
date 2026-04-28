@@ -97,6 +97,16 @@ In the UI:
    | Fast preview (Small model, 24 fps) | Depth model Small, target fps 24 |
    | Stronger 3D (shifts 0 / 100) | Eye shifts L=0, R=100 |
    | VR side-by-side stereo (90° HFOV, SBS) | HFOV 90°, projection equirect, stereo format SBS |
+   | SBS + Spatial — narrower & farther | HFOV 50°, equirect, SBS, shifts 0/20, spatial on |
+   | SBS + Spatial — narrower & closer | HFOV 50°, equirect, SBS, shifts 0/80, spatial on |
+   | SBS + Spatial — wider & farther | HFOV 110°, equirect, SBS, shifts 0/20, spatial on |
+   | SBS + Spatial — wider & closer | HFOV 110°, equirect, SBS, shifts 0/80, spatial on |
+
+   The four "SBS + Spatial" presets bundle the right combo for VR playback
+   (SBS layout + equirect projection + spatial output on). HFOV controls
+   "narrower vs wider" (smaller-feeling vs bigger-feeling screen in the
+   headset); shift gap controls "farther vs closer" (recessed vs pops-out
+   3D). Use them as a starting point and tweak HFOV / shifts from there.
 
    Each preset only changes the fields relevant to its name — everything
    else stays as you have it. The dropdown returns to "— Choose a preset —"
