@@ -7,6 +7,7 @@ from PySide6.QtCore import QThread, Signal
 
 _FRAME_TOTAL_RE = re.compile(r"Processed (\d+) frames")
 _FRAME_RE = re.compile(r"frame:\s*(\d+)")
+_OUTPUT_RE = re.compile(r"OUTPUT:\s*(.+?)\s*$")
 
 
 class QueueRunner(QThread):
@@ -29,6 +30,7 @@ class QueueRunner(QThread):
     item_finished = Signal(int, bool, str)  # row, success, message
     item_phase = Signal(int, str)           # row, phase label
     item_progress = Signal(int, int, int, float)  # row, done, total, eta_seconds (-1 if unknown)
+    item_output = Signal(int, str)          # row, output file path
     queue_finished = Signal()
     log_line = Signal(str)
 
@@ -194,6 +196,11 @@ class QueueRunner(QThread):
                 total = int(m.group(1))
                 self.item_phase.emit(row, "Processing frames")
                 self.item_progress.emit(row, 0, total, -1.0)
+                continue
+
+            m = _OUTPUT_RE.search(line)
+            if m:
+                self.item_output.emit(row, m.group(1))
                 continue
 
             m = _FRAME_RE.search(line)

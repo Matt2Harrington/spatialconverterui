@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFontDatabase
@@ -196,6 +197,10 @@ class MainWindow(QMainWindow):
         self.add_btn.clicked.connect(self._add_files)
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self._clear_queue)
+        self.show_finder_btn = QPushButton("Show in Finder")
+        self.show_finder_btn.setEnabled(False)
+        self.show_finder_btn.setToolTip("Reveal the selected item's output file in Finder")
+        self.show_finder_btn.clicked.connect(self._show_in_finder)
         self.start_btn = QPushButton("Start")
         self.start_btn.clicked.connect(self._start)
         self.stop_btn = QPushButton("Stop")
@@ -205,9 +210,15 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
         btn_row.addWidget(self.add_btn)
         btn_row.addWidget(self.clear_btn)
+        btn_row.addWidget(self.show_finder_btn)
         btn_row.addStretch(1)
         btn_row.addWidget(self.start_btn)
         btn_row.addWidget(self.stop_btn)
+
+        # Track per-row output paths reported by the runner, and update the
+        # Show in Finder button as the user changes selection.
+        self._row_outputs: dict[int, str] = {}
+        self.queue.itemSelectionChanged.connect(self._update_show_finder_button)
 
         # ---- current item / progress group ----
         self.current_label = QLabel("No item running")
@@ -306,6 +317,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Busy", "Stop the queue before clearing.")
             return
         self.queue.clear_all()
+        self._row_outputs.clear()
+        self._update_show_finder_button()
 
     def _start(self):
         if self.runner and self.runner.isRunning():
@@ -348,6 +361,8 @@ class MainWindow(QMainWindow):
 
         self.queue.reset_statuses()
         self.log.clear()
+        self._row_outputs.clear()
+        self._update_show_finder_button()
         self._reset_progress_panel()
 
         self.runner = QueueRunner(
@@ -371,6 +386,7 @@ class MainWindow(QMainWindow):
         self.runner.item_finished.connect(self._on_item_finished)
         self.runner.item_phase.connect(self._on_item_phase)
         self.runner.item_progress.connect(self._on_item_progress)
+        self.runner.item_output.connect(self._on_item_output)
         self.runner.queue_finished.connect(self._on_queue_finished)
         self.runner.log_line.connect(self.log.appendPlainText)
 
@@ -523,13 +539,45 @@ class MainWindow(QMainWindow):
             self.current_progress.setFormat("")
         self.eta_label.setText(_format_eta(eta))
 
+    def _on_item_output(self, row: int, path: str):
+        self._row_outputs[row] = path
+        self._update_show_finder_button()
+
     def _on_item_finished(self, row: int, ok: bool, msg: str):
         self.queue.set_status(row, "Done" if ok else "Failed", message=msg)
+        self._update_show_finder_button()
 
     def _on_queue_finished(self):
         self._set_running(False)
         self.statusBar().showMessage("Queue finished.", 5000)
         self._reset_progress_panel()
+
+    # ---- Show in Finder ----
+
+    def _selected_row(self) -> int:
+        rows = sorted({i.row() for i in self.queue.selectedIndexes()})
+        return rows[0] if rows else -1
+
+    def _update_show_finder_button(self):
+        row = self._selected_row()
+        path = self._row_outputs.get(row)
+        self.show_finder_btn.setEnabled(bool(path) and os.path.exists(path))
+
+    def _show_in_finder(self):
+        row = self._selected_row()
+        path = self._row_outputs.get(row)
+        if not path:
+            return
+        if not os.path.exists(path):
+            QMessageBox.warning(
+                self, "File missing", f"Expected file no longer exists:\n{path}"
+            )
+            return
+        # macOS: `open -R <path>` reveals and selects the file in Finder.
+        try:
+            subprocess.run(["open", "-R", path], check=False)
+        except Exception as e:
+            QMessageBox.warning(self, "Open failed", f"Could not open Finder:\n{e}")
 
     def closeEvent(self, event):
         if self.runner and self.runner.isRunning():
