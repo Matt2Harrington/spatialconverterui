@@ -143,7 +143,7 @@ class MainWindow(QMainWindow):
 
         self.projection_combo = QComboBox()
         self.projection_combo.setEditable(True)
-        for value in ("rect", "fisheye", "half_equirect"):
+        for value in ("rect", "fisheye", "equirect"):
             self.projection_combo.addItem(value)
         self.projection_combo.setCurrentText(
             self.settings.value("projection", "rect", type=str)
@@ -498,10 +498,11 @@ class MainWindow(QMainWindow):
             msg = "Stronger 3D shifts (0 / 100) applied."
         elif key == "vr_sbs":
             self.hfov_spin.setValue(90.0)
+            self.projection_combo.setCurrentText("equirect")
             i = self.stereo_format_combo.findData("sbs")
             if i >= 0:
                 self.stereo_format_combo.setCurrentIndex(i)
-            msg = "VR side-by-side stereo at 90° applied."
+            msg = "VR SBS (90° HFOV, equirect, SBS) applied."
         if msg:
             self.statusBar().showMessage(f"Preset: {msg}", 3000)
 

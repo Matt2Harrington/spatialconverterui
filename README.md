@@ -96,7 +96,7 @@ In the UI:
    | Fisheye / panoramic (170°, fisheye) | HFOV 170°, projection fisheye |
    | Fast preview (Small model, 24 fps) | Depth model Small, target fps 24 |
    | Stronger 3D (shifts 0 / 100) | Eye shifts L=0, R=100 |
-   | VR side-by-side stereo (90° HFOV, SBS) | HFOV 90°, stereo format SBS |
+   | VR side-by-side stereo (90° HFOV, SBS) | HFOV 90°, projection equirect, stereo format SBS |
 
    Each preset only changes the fields relevant to its name — everything
    else stays as you have it. The dropdown returns to "— Choose a preset —"
@@ -127,8 +127,11 @@ In the UI:
      cameras / ultrawides, 63-77° for typical phone main / mirrorless.
    - **Camera distance** — eye baseline in mm. Default `19.24`.
    - **Horizontal adjust** — alignment offset. Default `0.02`.
-   - **Projection** — `rect`, `fisheye`, or `half_equirect`. The combo is
+   - **Projection** — `rect`, `fisheye`, or `equirect`. The combo is
      editable, so any value the `spatial` tool supports can be typed.
+     (`half_equirect` / VR180 is *not* supported by Mike Swanson's `spatial`
+     tool — use `equirect` with a reduced HFOV like 90° to fake a hemispherical
+     feel within the full sphere.)
    - **Extra args** — free-form flags appended verbatim to the `./spatial
      make` command (e.g. `--primary right`). For anything the dropdowns
      don't cover.
