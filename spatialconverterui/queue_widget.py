@@ -204,11 +204,26 @@ class QueueTable(QTableWidget):
         self.setRowCount(0)
         self.paths.clear()
 
-    def reset_statuses(self) -> None:
+    def reset_statuses(self, skip_statuses: list[str] | None = None) -> None:
+        """Reset Status / Tries / Message columns to a Queued-equivalent state.
+
+        Pass `skip_statuses=["Done"]` to leave already-completed rows alone so
+        a re-Start of the queue won't re-process them.
+        """
+        skip = set(skip_statuses or [])
         for r in range(self.rowCount()):
+            status_item = self.item(r, COL_STATUS)
+            if status_item and status_item.text() in skip:
+                continue
             self.item(r, COL_STATUS).setText("Queued")
             self.item(r, COL_TRIES).setText("0")
             self.item(r, COL_MESSAGE).setText("")
+
+    def is_done(self, row: int) -> bool:
+        if 0 <= row < self.rowCount():
+            status_item = self.item(row, COL_STATUS)
+            return status_item is not None and status_item.text() == "Done"
+        return False
 
     def set_status(self, row: int, status: str, tries: int | None = None, message: str | None = None) -> None:
         if 0 <= row < self.rowCount():

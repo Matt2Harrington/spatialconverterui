@@ -369,6 +369,12 @@ class MainWindow(QMainWindow):
         # Track per-row output paths reported by the runner, and update the
         # Show in Finder button as the user changes selection.
         self._row_outputs: dict[int, str] = {}
+        # runner index → queue row, populated each time a run starts so we can
+        # skip Done rows without breaking signal-handler row indices.
+        self._runner_to_queue: dict[int, int] = {}
+        # Queue rows that produced an OUTPUT during the current run only —
+        # used so auto-open reveals a fresh result, not a stale Done.
+        self._this_run_processed: set[int] = set()
         self.queue.itemSelectionChanged.connect(self._update_show_finder_button)
 
         # ---- current item / progress group ----
@@ -496,6 +502,8 @@ class MainWindow(QMainWindow):
             return
         self.queue.clear_all()
         self._row_outputs.clear()
+        self._this_run_processed.clear()
+        self._runner_to_queue.clear()
         self._update_show_finder_button()
 
     def _start(self):
@@ -507,6 +515,23 @@ class MainWindow(QMainWindow):
         path = self.path_edit.text().strip()
         if not path:
             QMessageBox.warning(self, "Missing path", "Set the spatialconverter path first.")
+            return
+
+        # Skip already-completed rows so re-Start doesn't re-process Done items.
+        self._runner_to_queue = {}
+        filtered_paths: list[str] = []
+        for queue_row, video_path in enumerate(self.queue.paths):
+            if self.queue.is_done(queue_row):
+                continue
+            self._runner_to_queue[len(filtered_paths)] = queue_row
+            filtered_paths.append(video_path)
+
+        if not filtered_paths:
+            QMessageBox.information(
+                self,
+                "Nothing to do",
+                "All queued items are already Done. Right-click a row → Duplicate to re-process.",
+            )
             return
 
         model_size = self.model_combo.currentData()
@@ -541,14 +566,19 @@ class MainWindow(QMainWindow):
         self.settings.setValue("watch_enabled", self.watch_enabled_check.isChecked())
         self.settings.setValue("watch_auto_start", self.watch_auto_start_check.isChecked())
 
-        self.queue.reset_statuses()
+        # Only reset rows we're actually going to re-process; leave Done alone.
+        self.queue.reset_statuses(skip_statuses=["Done"])
         self.log.clear()
-        self._row_outputs.clear()
+        # Clear stale outputs only for rows we're re-running; keep Done outputs.
+        for queue_row in list(self._row_outputs.keys()):
+            if not self.queue.is_done(queue_row):
+                self._row_outputs.pop(queue_row, None)
+        self._this_run_processed.clear()
         self._update_show_finder_button()
         self._reset_progress_panel()
 
         self.runner = QueueRunner(
-            list(self.queue.paths),
+            filtered_paths,
             path,
             self.retries_spin.value(),
             model_size=model_size,
@@ -573,7 +603,11 @@ class MainWindow(QMainWindow):
         self.runner.log_line.connect(self.log.appendPlainText)
 
         self._set_running(True)
-        self.statusBar().showMessage(f"Running {len(self.queue.paths)} item(s)…")
+        skipped = len(self.queue.paths) - len(filtered_paths)
+        skipped_msg = f" ({skipped} already Done, skipped)" if skipped else ""
+        self.statusBar().showMessage(
+            f"Running {len(filtered_paths)} item(s)…{skipped_msg}"
+        )
         self.runner.start()
 
     def _stop(self):
@@ -754,21 +788,33 @@ class MainWindow(QMainWindow):
 
     # ---- runner signal handlers ----
 
-    def _on_item_started(self, row: int, attempt: int):
+    def _to_queue_row(self, runner_row: int) -> int:
+        """Translate a runner-side row (index into the filtered items list)
+        into the corresponding queue table row. Falls back to the runner row
+        if no mapping exists (e.g. legacy behavior with no Done rows)."""
+        return self._runner_to_queue.get(runner_row, runner_row)
+
+    def _on_item_started(self, runner_row: int, attempt: int):
+        queue_row = self._to_queue_row(runner_row)
         status = "Running" if attempt == 1 else "Retrying"
-        self.queue.set_status(row, status, tries=attempt)
-        name = os.path.basename(self.queue.paths[row]) if 0 <= row < len(self.queue.paths) else f"row {row}"
+        self.queue.set_status(queue_row, status, tries=attempt)
+        name = (
+            os.path.basename(self.queue.paths[queue_row])
+            if 0 <= queue_row < len(self.queue.paths)
+            else f"row {queue_row}"
+        )
         suffix = "" if attempt == 1 else f"  (retry {attempt - 1})"
-        self.current_label.setText(f"{name}  ({row + 1}/{len(self.queue.paths)}){suffix}")
+        total = len(self._runner_to_queue) or len(self.queue.paths)
+        self.current_label.setText(f"{name}  ({runner_row + 1}/{total}){suffix}")
         self.phase_label.setText("Starting…")
         self.current_progress.setRange(0, 0)  # busy/indeterminate until first known total
         self.current_progress.setFormat("")
         self.eta_label.setText("ETA: —")
 
-    def _on_item_phase(self, row: int, phase: str):
+    def _on_item_phase(self, runner_row: int, phase: str):
         self.phase_label.setText(phase)
 
-    def _on_item_progress(self, row: int, done: int, total: int, eta: float):
+    def _on_item_progress(self, runner_row: int, done: int, total: int, eta: float):
         if total > 0:
             self.current_progress.setRange(0, total)
             self.current_progress.setValue(done)
@@ -778,22 +824,26 @@ class MainWindow(QMainWindow):
             self.current_progress.setFormat("")
         self.eta_label.setText(_format_eta(eta))
 
-    def _on_item_output(self, row: int, path: str):
-        self._row_outputs[row] = path
+    def _on_item_output(self, runner_row: int, path: str):
+        queue_row = self._to_queue_row(runner_row)
+        self._row_outputs[queue_row] = path
+        self._this_run_processed.add(queue_row)
         self._update_show_finder_button()
 
-    def _on_item_finished(self, row: int, ok: bool, msg: str):
-        self.queue.set_status(row, "Done" if ok else "Failed", message=msg)
+    def _on_item_finished(self, runner_row: int, ok: bool, msg: str):
+        queue_row = self._to_queue_row(runner_row)
+        self.queue.set_status(queue_row, "Done" if ok else "Failed", message=msg)
         self._update_show_finder_button()
 
     def _on_queue_finished(self):
         self._set_running(False)
         self.statusBar().showMessage("Queue finished.", 5000)
         self._reset_progress_panel()
-        # Auto-open the first completed output in Finder if requested.
-        if self.auto_open_check.isChecked() and self._row_outputs:
-            for row in sorted(self._row_outputs.keys()):
-                path = self._row_outputs[row]
+        # Auto-open the first output produced *during this run* (not a stale
+        # Done from a previous run). Falls back to nothing if no fresh outputs.
+        if self.auto_open_check.isChecked() and self._this_run_processed:
+            for queue_row in sorted(self._this_run_processed):
+                path = self._row_outputs.get(queue_row)
                 if path and os.path.exists(path):
                     try:
                         subprocess.run(["open", "-R", path], check=False)
