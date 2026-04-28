@@ -6,7 +6,8 @@ from .window import MainWindow
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("spatialconverterui")
+    app.setApplicationName("Spatial Converted")
+    app.setApplicationDisplayName("Spatial Converted")
     app.setOrganizationName("vision-utils")
     window = MainWindow()
     window.show()

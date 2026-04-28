@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QFileSystemWatcher, QSettings, Qt, QTimer
 from PySide6.QtGui import QFontDatabase, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -146,7 +146,7 @@ def _format_eta(seconds: float) -> str:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SpatialConverter UI")
+        self.setWindowTitle("Spatial Converted")
         self.resize(1000, 720)
         self.settings = QSettings()
 
@@ -211,6 +211,36 @@ class MainWindow(QMainWindow):
         idx_fmt = self.stereo_format_combo.findData(saved_fmt)
         self.stereo_format_combo.setCurrentIndex(idx_fmt if idx_fmt >= 0 else 0)
 
+        # Auto-open completed output in Finder
+        self.auto_open_check = QCheckBox("Auto-open output in Finder when queue finishes")
+        self.auto_open_check.setChecked(
+            self.settings.value("auto_open_on_finish", True, type=bool)
+        )
+
+        # Watch folder
+        self.watch_path_edit = QLineEdit(self.settings.value("watch_folder", "", type=str))
+        self.watch_path_edit.setPlaceholderText("/path/to/folder to monitor")
+        watch_browse_btn = QPushButton("Browse…")
+        watch_browse_btn.clicked.connect(self._browse_watch_folder)
+        watch_path_row = QHBoxLayout()
+        watch_path_row.addWidget(self.watch_path_edit, 1)
+        watch_path_row.addWidget(watch_browse_btn)
+
+        self.watch_enabled_check = QCheckBox("Watch & auto-add new videos")
+        self.watch_enabled_check.setToolTip(
+            "When on, any new videos appearing in the watch folder are added to the queue. "
+            "Existing videos in the folder are added once when the watch is enabled."
+        )
+        self.watch_enabled_check.setChecked(
+            self.settings.value("watch_enabled", False, type=bool)
+        )
+        self.watch_enabled_check.toggled.connect(self._on_watch_toggled)
+
+        self.watch_auto_start_check = QCheckBox("Auto-start queue when new files arrive")
+        self.watch_auto_start_check.setChecked(
+            self.settings.value("watch_auto_start", False, type=bool)
+        )
+
         settings_box = QGroupBox("Conversion settings")
         form = QFormLayout(settings_box)
         form.addRow("spatialconverter path:", path_row)
@@ -220,6 +250,10 @@ class MainWindow(QMainWindow):
         form.addRow("Eye shifts:", shifts_row)
         form.addRow("Output zoom:", self.zoom_spin)
         form.addRow("Stereo format:", self.stereo_format_combo)
+        form.addRow("", self.auto_open_check)
+        form.addRow("Watch folder:", watch_path_row)
+        form.addRow("", self.watch_enabled_check)
+        form.addRow("", self.watch_auto_start_check)
 
         # ---- Spatial output settings ----
         self.hfov_spin = QDoubleSpinBox()
@@ -423,12 +457,32 @@ class MainWindow(QMainWindow):
         self.runner: QueueRunner | None = None
         self.preview_runner: PreviewRunner | None = None
 
+        # Watch-folder state
+        self._fs_watcher = QFileSystemWatcher(self)
+        self._fs_watcher.directoryChanged.connect(self._on_watch_dir_changed)
+        self._watch_seen: set[str] = set()
+        self._watch_active_path: str = ""
+        self._watch_pending_start = False
+        # Apply saved watch state on launch
+        if self.watch_enabled_check.isChecked() and self.watch_path_edit.text().strip():
+            self._enable_watch()
+
     # ---- actions ----
 
     def _browse_path(self):
         d = QFileDialog.getExistingDirectory(self, "Choose spatialconverter directory")
         if d:
             self.path_edit.setText(d)
+
+    def _browse_watch_folder(self):
+        d = QFileDialog.getExistingDirectory(self, "Choose folder to watch")
+        if d:
+            self.watch_path_edit.setText(d)
+            self.settings.setValue("watch_folder", d)
+            if self.watch_enabled_check.isChecked():
+                # Re-enable to point at the new path
+                self._disable_watch()
+                self._enable_watch()
 
     def _add_files(self):
         pattern = "Videos (" + " ".join(f"*{e}" for e in sorted(VIDEO_EXTS)) + ")"
@@ -482,6 +536,10 @@ class MainWindow(QMainWindow):
         self.settings.setValue("zoom", zoom)
         self.settings.setValue("stereo_format", stereo_format)
         self.settings.setValue("spatial_enabled", spatial_enabled)
+        self.settings.setValue("auto_open_on_finish", self.auto_open_check.isChecked())
+        self.settings.setValue("watch_folder", self.watch_path_edit.text().strip())
+        self.settings.setValue("watch_enabled", self.watch_enabled_check.isChecked())
+        self.settings.setValue("watch_auto_start", self.watch_auto_start_check.isChecked())
 
         self.queue.reset_statuses()
         self.log.clear()
@@ -542,6 +600,10 @@ class MainWindow(QMainWindow):
         self.zoom_spin.setEnabled(not running)
         self.stereo_format_combo.setEnabled(not running)
         self.preset_combo.setEnabled(not running)
+        self.watch_path_edit.setEnabled(not running)
+        self.watch_enabled_check.setEnabled(not running)
+        self.watch_auto_start_check.setEnabled(not running)
+        self.auto_open_check.setEnabled(not running)
         self.spatial_enabled_check.setEnabled(not running)
         # When running, also keep spatial-dependent fields disabled regardless
         # of the checkbox; when idle, restore them based on the checkbox state.
@@ -728,6 +790,16 @@ class MainWindow(QMainWindow):
         self._set_running(False)
         self.statusBar().showMessage("Queue finished.", 5000)
         self._reset_progress_panel()
+        # Auto-open the first completed output in Finder if requested.
+        if self.auto_open_check.isChecked() and self._row_outputs:
+            for row in sorted(self._row_outputs.keys()):
+                path = self._row_outputs[row]
+                if path and os.path.exists(path):
+                    try:
+                        subprocess.run(["open", "-R", path], check=False)
+                    except Exception:
+                        pass
+                    break
 
     # ---- Show in Finder ----
 
@@ -765,6 +837,88 @@ class MainWindow(QMainWindow):
             subprocess.run(["open", "-R", path], check=False)
         except Exception as e:
             QMessageBox.warning(self, "Open failed", f"Could not open Finder:\n{e}")
+
+    # ---- Watch folder ----
+
+    def _on_watch_toggled(self, checked: bool):
+        self.settings.setValue("watch_enabled", checked)
+        if checked:
+            self._enable_watch()
+        else:
+            self._disable_watch()
+
+    def _enable_watch(self):
+        folder = self.watch_path_edit.text().strip()
+        if not folder or not os.path.isdir(folder):
+            self.statusBar().showMessage(
+                "Watch folder is not a valid directory; not watching.", 4000
+            )
+            self.watch_enabled_check.setChecked(False)
+            return
+        if self._watch_active_path:
+            self._disable_watch()
+        self._watch_active_path = folder
+        self._fs_watcher.addPath(folder)
+        # Initial scan: add any existing video files.
+        self._scan_watch_folder(folder, include_existing=True)
+        self.statusBar().showMessage(f"Watching {folder}", 4000)
+
+    def _disable_watch(self):
+        if self._watch_active_path:
+            self._fs_watcher.removePath(self._watch_active_path)
+            self._watch_active_path = ""
+        self._watch_seen.clear()
+
+    def _on_watch_dir_changed(self, path: str):
+        self._scan_watch_folder(path, include_existing=False)
+
+    def _scan_watch_folder(self, folder: str, include_existing: bool):
+        try:
+            entries = os.listdir(folder)
+        except OSError:
+            return
+        new_videos: list[str] = []
+        for name in entries:
+            full = os.path.join(folder, name)
+            if not os.path.isfile(full):
+                continue
+            ext = os.path.splitext(name)[1].lower()
+            if ext not in VIDEO_EXTS:
+                continue
+            if full in self._watch_seen:
+                continue
+            if full in self.queue.paths:
+                self._watch_seen.add(full)
+                continue
+            if not include_existing and full not in self._watch_seen:
+                pass  # treat as new — fall through and add
+            new_videos.append(full)
+
+        for v in sorted(new_videos):
+            self.queue.add_file(v)
+            self._watch_seen.add(v)
+
+        if new_videos:
+            self.statusBar().showMessage(
+                f"Watch folder: added {len(new_videos)} file(s) to queue.", 4000
+            )
+            self._update_show_finder_button()  # refresh preview-button enable state
+            if self.watch_auto_start_check.isChecked():
+                # Debounce: schedule one auto-start in 2s. If files keep arriving,
+                # the run condition is re-checked when the timer fires.
+                if not self._watch_pending_start:
+                    self._watch_pending_start = True
+                    QTimer.singleShot(2000, self._maybe_auto_start)
+
+    def _maybe_auto_start(self):
+        self._watch_pending_start = False
+        if (
+            self.watch_auto_start_check.isChecked()
+            and self.queue.paths
+            and not (self.runner and self.runner.isRunning())
+            and not (self.preview_runner and self.preview_runner.isRunning())
+        ):
+            self._start()
 
     # ---- Preview ----
 

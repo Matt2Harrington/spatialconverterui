@@ -10,6 +10,13 @@ On failure, it automatically retries up to a configurable number of times.
 
 - Drag-and-drop a queue of any size
 - Per-item status: Queued / Running / Retrying / Done / Failed
+- **Source video metadata** (resolution, fps, duration) shown in an Info
+  column when files are added (requires `ffprobe` on PATH)
+- **Right-click queue rows** for Duplicate / Remove
+- **Watch folder**: monitor a directory and auto-add new videos as they
+  arrive, optionally auto-starting the queue
+- **Auto-open output in Finder** when the queue finishes
+- Single-frame and 3-second clip previews for fast iteration on settings
 - Auto-retry on failure (configurable, default 3)
 - Sequential execution (one GPU job at a time)
 - Live log view of converter output
@@ -24,10 +31,14 @@ the depth-estimation model is heavy.
 ### Prerequisites (skip what you already have)
 
 ```bash
-brew install python@3.13 poetry git
+brew install python@3.13 poetry git ffmpeg
 python3.13 --version   # confirm it's installed
 poetry --version
+ffprobe -version | head -1   # used for in-app metadata probing
 ```
+
+(`ffmpeg` is optional but recommended — without `ffprobe` on PATH the queue's
+Info column will be empty.)
 
 > **Use Python 3.13, not 3.14.** Homebrew's `python@3.14` ships a `pyexpat`
 > built against a newer `libexpat` than macOS provides, which crashes any
