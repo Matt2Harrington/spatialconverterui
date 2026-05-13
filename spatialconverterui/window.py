@@ -388,6 +388,7 @@ class MainWindow(QMainWindow):
         # used so auto-open reveals a fresh result, not a stale Done.
         self._this_run_processed: set[int] = set()
         self.queue.itemSelectionChanged.connect(self._update_show_finder_button)
+        self.queue.rows_about_to_remove.connect(self._on_queue_rows_removing)
 
         # ---- current item / progress group ----
         self.current_label = QLabel("No item running")
@@ -804,12 +805,61 @@ class MainWindow(QMainWindow):
 
     def _to_queue_row(self, runner_row: int) -> int:
         """Translate a runner-side row (index into the filtered items list)
-        into the corresponding queue table row. Falls back to the runner row
-        if no mapping exists (e.g. legacy behavior with no Done rows)."""
-        return self._runner_to_queue.get(runner_row, runner_row)
+        into the corresponding queue table row. Returns -1 if no mapping
+        (the row was removed from the queue mid-run)."""
+        return self._runner_to_queue.get(runner_row, -1)
+
+    def _on_queue_rows_removing(self, queue_rows: list[int]):
+        """Keep our tracking dicts/sets aligned with the queue table when the
+        user removes rows. queue_rows arrives in descending order so we can
+        process each removal as a discrete shift-down."""
+        for queue_row in queue_rows:
+            # If the runner is still running and this row maps to a runner
+            # index, ask the runner to skip it (and kill the in-flight
+            # subprocess if it's the one currently running).
+            if self.runner and self.runner.isRunning():
+                runner_row = None
+                for rr, qr in self._runner_to_queue.items():
+                    if qr == queue_row:
+                        runner_row = rr
+                        break
+                if runner_row is not None:
+                    self.runner.request_skip(runner_row)
+                    del self._runner_to_queue[runner_row]
+            else:
+                # No active run; just drop any stale mapping entry.
+                stale = [rr for rr, qr in self._runner_to_queue.items() if qr == queue_row]
+                for rr in stale:
+                    del self._runner_to_queue[rr]
+
+            # Shift remaining mapping entries down past the removed queue row.
+            self._runner_to_queue = {
+                rr: (qr - 1 if qr > queue_row else qr)
+                for rr, qr in self._runner_to_queue.items()
+            }
+
+            # Same shift for outputs and the this-run set.
+            self._row_outputs.pop(queue_row, None)
+            self._row_outputs = {
+                (qr - 1 if qr > queue_row else qr): path
+                for qr, path in self._row_outputs.items()
+            }
+
+            shifted_processed: set[int] = set()
+            for qr in self._this_run_processed:
+                if qr == queue_row:
+                    continue
+                shifted_processed.add(qr - 1 if qr > queue_row else qr)
+            self._this_run_processed = shifted_processed
+
+        self._update_show_finder_button()
 
     def _on_item_started(self, runner_row: int, attempt: int):
         queue_row = self._to_queue_row(runner_row)
+        if queue_row < 0:
+            # Row was removed before this attempt started. The runner skips it
+            # internally; no UI to update.
+            return
         status = "Running" if attempt == 1 else "Retrying"
         self.queue.set_status(queue_row, status, tries=attempt)
         name = (
@@ -840,12 +890,17 @@ class MainWindow(QMainWindow):
 
     def _on_item_output(self, runner_row: int, path: str):
         queue_row = self._to_queue_row(runner_row)
+        if queue_row < 0:
+            return
         self._row_outputs[queue_row] = path
         self._this_run_processed.add(queue_row)
         self._update_show_finder_button()
 
     def _on_item_finished(self, runner_row: int, ok: bool, msg: str):
         queue_row = self._to_queue_row(runner_row)
+        if queue_row < 0:
+            # Row was removed; nothing to update in the table.
+            return
         self.queue.set_status(queue_row, "Done" if ok else "Failed", message=msg)
         self._update_show_finder_button()
         if (

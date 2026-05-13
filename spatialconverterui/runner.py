@@ -99,6 +99,8 @@ class QueueRunner(QThread):
         self._stop = False
         self._proc: subprocess.Popen | None = None
         self._python_exe: str = ""
+        self._skipped: set[int] = set()
+        self._current_row: int = -1
 
     def stop(self) -> None:
         self._stop = True
@@ -107,6 +109,13 @@ class QueueRunner(QThread):
         # The runner thread will escalate to SIGKILL if anything hangs past
         # the grace period.
         _kill_process_group(self._proc, signal.SIGTERM)
+
+    def request_skip(self, runner_row: int) -> None:
+        """Skip the given runner-side row index. If it's the row currently
+        running, also kill the subprocess so we don't waste compute on it."""
+        self._skipped.add(runner_row)
+        if runner_row == self._current_row:
+            _kill_process_group(self._proc, signal.SIGTERM)
 
     def run(self) -> None:
         cwd = os.path.join(self.converter_path, "spatialconverter")
@@ -129,13 +138,19 @@ class QueueRunner(QThread):
         for row, video in enumerate(self.items):
             if self._stop:
                 break
+            if row in self._skipped:
+                self.log_line.emit(f"[{row + 1}/{len(self.items)}] skipped (removed from queue)")
+                self.item_finished.emit(row, False, "removed from queue")
+                continue
+
+            self._current_row = row
 
             total_tries = self.max_retries + 1
             success = False
             last_err = ""
 
             for attempt in range(1, total_tries + 1):
-                if self._stop:
+                if self._stop or row in self._skipped:
                     break
                 self.item_started.emit(row, attempt)
                 self.item_phase.emit(row, "Reading frames…")
@@ -151,6 +166,9 @@ class QueueRunner(QThread):
                     self.log_line.emit(f"ERROR: {last_err}")
                     break
 
+                if row in self._skipped:
+                    last_err = "removed from queue"
+                    break
                 if self._stop:
                     last_err = "stopped"
                     break
@@ -160,9 +178,15 @@ class QueueRunner(QThread):
                 last_err = f"exit code {rc}"
                 self.log_line.emit(f"FAILED ({last_err})")
 
+            self._current_row = -1
+
             if self._stop:
                 self.item_finished.emit(row, False, "stopped")
                 break
+
+            if row in self._skipped:
+                self.item_finished.emit(row, False, "removed from queue")
+                continue
 
             self.item_finished.emit(row, success, "" if success else last_err)
 

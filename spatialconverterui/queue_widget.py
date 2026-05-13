@@ -108,6 +108,7 @@ class QueueTable(QTableWidget):
 
     files_added = Signal(list)
     duplicate_requested = Signal(list)  # list of paths to add as duplicates
+    rows_about_to_remove = Signal(list)  # descending list of queue_row indices
 
     def __init__(self):
         super().__init__(0, 5)
@@ -171,6 +172,11 @@ class QueueTable(QTableWidget):
 
     def _remove_selected_rows(self):
         rows = sorted({i.row() for i in self.selectedIndexes()}, reverse=True)
+        if not rows:
+            return
+        # Notify listeners before removal so they can update tracking with
+        # indices that still exist.
+        self.rows_about_to_remove.emit(list(rows))
         for r in rows:
             if 0 <= r < self.rowCount():
                 self.removeRow(r)
